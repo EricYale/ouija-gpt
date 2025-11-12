@@ -40,15 +40,12 @@ void handleCommand(char command) {
   switch (command) {
     case 'y':
       servo.write(SERVO_POS_YES);
-      spinnerState = STATE_LISTENING;
       break;
     case 'n':
       servo.write(SERVO_POS_NO);
-      spinnerState = STATE_LISTENING;
       break;
     case 'm':
       servo.write(SERVO_POS_MAYBE);
-      spinnerState = STATE_LISTENING;
       break;
     case 'l':
       spinnerState = STATE_LISTENING;

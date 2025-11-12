@@ -25,13 +25,14 @@ MIN_AUDIO_BYTES = SAMPLE_RATE * 2 * 0.1  # 0.1 seconds of audio
 ser = None
 utterance_text = ""
 is_utterance_finished = False
+last_valid_responses = []
 
 def setup_serial():
     global ser
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE)
         print("Serial connection established.")
-        set_spinner_state('l')  # Start in listening state
+        set_spinner_state('s')
     except serial.SerialException as e:
         print(f"Error opening serial port: {e}")
         print("Running in simulation mode. Motor commands will be printed.")
@@ -160,11 +161,12 @@ async def transcribe_audio(audio_queue):
                     # print(data)
                     msg_type = data.get("type")
                     if msg_type == "input_audio_buffer.speech_started":
-                        set_spinner_state('t') # Thinking state
-                    if msg_type == "conversation.item.input_audio_transcription.completed":
-                        print(data)
+                        set_spinner_state('t')
+                    elif msg_type == "input_audio_buffer.speech_stopped":
+                        set_spinner_state('s')
+                    elif msg_type == "conversation.item.input_audio_transcription.completed":
+                        set_spinner_state('s')
                         utterance_text = data.get("transcript", "")
-                        print(f"Transcript (final): {utterance_text}")
                         is_utterance_finished = True
                         pending_commit = False
                         have_spoken = False
@@ -175,7 +177,7 @@ async def transcribe_audio(audio_queue):
     except Exception as e:
         print(f"WebSocket connection failed: {e}")
 
-def get_spirit_response(question):
+def get_spirit_response(question, context_messages=None):
     try:
         with open(PROMPT_FILE, 'r') as f:
             prompt = f.read()
@@ -185,12 +187,13 @@ def get_spirit_response(question):
 
     try:
         client = openai.OpenAI()
+        messages = [{"role": "system", "content": prompt}]
+        if context_messages:
+            messages.extend(context_messages)
+        messages.append({"role": "user", "content": question})
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": question}
-            ],
+            messages=messages,
             max_tokens=5,
             temperature=0.5,
         )
@@ -204,7 +207,7 @@ def get_spirit_response(question):
         return "invalid"
 
 async def main_loop():
-    global utterance_text, is_utterance_finished
+    global utterance_text, is_utterance_finished, last_valid_responses
     
     setup_serial()
     
@@ -216,31 +219,34 @@ async def main_loop():
     while True:
         if is_utterance_finished:
             print(f"Utterance finished: '{utterance_text}'")
-            set_spinner_state('t')  # Thinking state
+            set_spinner_state('s')
 
-            response = get_spirit_response(utterance_text)
+            # Prepare context for spirit response
+            context_messages = []
+            for pair in last_valid_responses[-7:]:
+                context_messages.append({"role": "user", "content": pair[0]})
+                context_messages.append({"role": "assistant", "content": pair[1]})
+
+            response = get_spirit_response(utterance_text, context_messages)
             print(f"Spirit response: {response}")
 
-            set_spinner_state('s') # Stop spinner
-
             if response != "invalid":
-                # Dramatic cycling between positions for 2 seconds
-                cycle_positions = ['y', 'm', 'n']
-                cycle_time = 1.0
-                cycle_interval = 0.25
-                cycles = int(cycle_time / cycle_interval)
-                for i in range(cycles):
-                    move_planchette({'y': 'yes', 'm': 'maybe', 'n': 'no'}[cycle_positions[i % 3]])
-                    await asyncio.sleep(cycle_interval)
-
+                last_valid_responses.append((utterance_text, response))
+                if len(last_valid_responses) > 7:
+                    last_valid_responses = last_valid_responses[-7:]
+                last_state = None
+                if len(last_valid_responses) > 1:
+                    last_state = last_valid_responses[-2][1]
+                if last_state == response:
+                    alt = next(s for s in ["yes", "no", "maybe"] if s != response)
+                    move_planchette(alt)
+                    await asyncio.sleep(0.1)
                 move_planchette(response)
-                # Give servo time to move
                 await asyncio.sleep(2)
 
             # Reset for next utterance
             utterance_text = ""
             is_utterance_finished = False
-            set_spinner_state('l') # Back to listening
 
         await asyncio.sleep(0.1)
 
