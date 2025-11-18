@@ -11,7 +11,7 @@ import base64
 import time
 
 # --- Configuration ---
-SERIAL_PORT = "/dev/cu.usbserial-130"  # Adjust as needed
+SERIAL_PORT = "/dev/cu.usbserial-2140"
 BAUD_RATE = 115200
 AUDIO_DEVICE = None  # Use default device
 SAMPLE_RATE = 24000
